@@ -1,0 +1,328 @@
+\documentclass{beamer}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{xpatch}
+
+\xpatchcmd{\itemize}
+  {\def\makelabel}
+  {\ifnum\@itemdepth=1\relax
+     \setlength\itemsep{4ex}% separation for first level
+   \else
+     \ifnum\@itemdepth=2\relax
+       \setlength\itemsep{2.5ex}% separation for second level
+     \else
+       \ifnum\@itemdepth=3\relax
+         \setlength\itemsep{1ex}% separation for third level
+   \fi\fi\fi\def\makelabel
+  }
+ {}
+ {}
+
+\usetheme{Madrid} % You can choose other themes like Madrid, Boadilla, etc.
+
+\title{Mastering the Game of Go}
+\subtitle{Deep Neural Networks and Tree Search (AlphaGo)}
+\author{Rushil Gupta, Dhruman Gupta}
+\date{April 24, 2025}
+
+\begin{document}
+
+\frame{\titlepage}
+
+\AtBeginSection[]
+{
+  \begin{frame}
+    \frametitle{Table of Contents}
+    \tableofcontents[currentsection]
+  \end{frame}
+}
+
+
+%------------------------------------------------
+\section{Introduction}
+%------------------------------------------------
+\begin{frame}{Introduction}
+    \begin{itemize}
+        \item \textbf{AlphaGo:} A computer program developed by Google DeepMind to play the board game Go.
+        \item Uses deep neural networks combined with Monte Carlo Tree Search (MCTS).
+    \end{itemize}
+\end{frame}
+
+\begin{frame}{Introduction}
+    \begin{itemize}
+        \item First program to defeat a human professional Go player (Fan Hui) on a full-sized 19x19 board without handicap.
+        \item Achieved a 5-0 victory in a formal match.
+        \item Considered a grand challenge for Artificial Intelligence, previously thought to be decades away.
+    \end{itemize}
+\end{frame}
+
+\begin{frame}{The Game: Go}
+    \begin{itemize}
+        \item Go is a game of perfect information, like chess.
+        \item \textbf{Challenge:} Extremely difficult for AI due to:
+        \vspace{2ex}
+            \begin{itemize}
+                \item \textbf{Enormous Search Space:}
+                \begin{itemize}
+                    \item Branching factor $b \approx 250$.
+                    \item Game depth $d \approx 150$.
+                    \item Number of sequences $\approx b^d \approx 250^{150}$.
+                    \item Exhaustive search is infeasible.
+                \end{itemize}
+                \item \textbf{Difficult Position Evaluation:} Hard to judge who is winning from a given board state.
+            \end{itemize}
+    \end{itemize}
+\end{frame}
+
+%------------------------------------------------
+\section{Background and Overview}
+%------------------------------------------------
+\begin{frame}{Methods Before AlphaGo: MCTS}
+    \begin{itemize}
+        \item \textbf{Monte Carlo Tree Search (MCTS):} State-of-the-art before AlphaGo.
+        \item \textbf{Core Idea:} Build a search tree, estimate state values using random simulations (rollouts).
+        \item \textbf{Rollout Intuition:}
+        \begin{itemize}
+            \item From a state $s$, play out many games randomly (or using a simple policy) to the end.
+            \item Average the win/loss outcomes from these rollouts to estimate the value of $s$.
+        \end{itemize}
+    \end{itemize}
+\end{frame}
+
+\begin{frame}{Methods Before AlphaGo: MCTS}
+    \begin{itemize}
+        \item MCTS balances exploration and exploitation, and used variants of UCB to select actions.
+        \item \textbf{Limitations:} Often relied on shallow policies or simple value functions. Strong amateur level play was achieved.
+    \end{itemize}
+\end{frame}
+
+\begin{frame}{AlphaGo's Methods: Overview}
+    \textbf{Key Idea:} Use deep neural networks to guide MCTS.
+    \vspace{2ex}
+    \begin{itemize}
+        \item \textbf{Policy Network $p(a|s)$:} Predicts probability of choosing action $a$ in state $s$. Reduces search \textit{breadth}.
+        \item \textbf{Value Network $v(s)$:} Estimates the probability of the current player winning from state $s$. Reduces search \textit{depth}.
+    \end{itemize}
+\end{frame}
+
+\begin{frame}{AlphaGo's Methods: Overview}
+    \textbf{Training Pipeline}:
+    \vspace{2ex}
+    \begin{enumerate}
+        \setlength{\itemsep}{2ex}
+        \item \textbf{Data Collection:} Collect games from human experts.
+        \item \textbf{SL Policy Network ($p_{\sigma}$):} Train on human expert games.
+        \item \textbf{RL Policy Network ($p_{\rho}$):} Improve SL network via self-play, optimizing for winning.
+        \item \textbf{Value Network ($v_{\theta}$):} Train to predict game outcome from self-play games using the RL policy network.
+    \end{enumerate}
+\end{frame}
+
+
+%------------------------------------------------
+\section{MDP Formulation}
+%------------------------------------------------
+\begin{frame}{MDP Formulation}
+    Go framed as a Markov Decision Process (MDP) / alternating Markov game:
+    \vspace{2ex}
+    \begin{itemize}
+        \item \textbf{States $s \in S$:} Board position + current player.
+        \item \textbf{Actions $a \in A(s)$:} Legal moves.
+        \item \textbf{Transition $s' = f(s, a)$:} Deterministic next state.
+    \end{itemize}
+\end{frame}
+
+\begin{frame}{MDP Formulation}
+    \begin{itemize}
+        \item \textbf{Reward Function $r(s)$:}
+        \vspace{2ex}
+        \begin{itemize}
+            \item $r(s) = 0$ for non-terminal states ($t < T$).
+            \item At terminal state $s_T$, reward is based on game outcome
+        \end{itemize}
+    \end{itemize}
+    \vspace{3ex}
+    \[
+        r(s) =
+        \begin{cases}
+            0 & \text{if } t < T \\
+            1 & \text{if win at } s_T \\
+            -1 & \text{if loss at } s_T
+        \end{cases}
+    \]
+\end{frame}
+
+%------------------------------------------------
+\section{Policy Network}
+%------------------------------------------------
+\begin{frame}{Supervised Learning (SL) Policy Network ($p_{\sigma}$)}
+    \begin{itemize}
+        \item \textbf{Goal:} Imitate human expert moves.
+        \item \textbf{Network:} 13-layer Convolutional Neural Network (CNN).
+        \vspace{2ex}
+        \begin{itemize}
+            \item Input: Board state $s$.
+            \item Output: Probability distribution $p_{\sigma}(a|s)$ over legal moves $a$.
+        \end{itemize}
+    \end{itemize}
+\end{frame}
+
+\begin{frame}{Supervised Learning (SL) Policy Network ($p_{\sigma}$)}
+    \begin{itemize}
+        \item \textbf{Training Data:} 30 million positions from KGS Go Server.
+        \item \textbf{Objective:} Maximize log likelihood of move $a$ in state $s$:
+        $$ \Delta\sigma \propto \frac{\partial \log p_{\sigma}(a|s)}{\partial\sigma} $$
+        \item \textbf{Result:} 57.0\% accuracy on test set, (3ms/move).
+    \end{itemize}
+\end{frame}
+
+\begin{frame}{Supervised Learning (SL) Policy Network ($p_{\sigma}$)}
+    \begin{itemize}
+        \item Another smaller, linear model was also trained for faster rollouts.
+        \item \textbf{Fast Rollout Policy ($p_{\pi}$):} 24.2\% accuracy, 2$\mu$s/move.
+    \end{itemize}
+\end{frame}
+
+\begin{frame}{Reinforcement Learning (RL) Policy Network ($p_{\rho}$)}
+    \begin{itemize}
+        \item \textbf{Goal:} Improve $p_{\sigma}$ to maximize winning probability, not just accuracy.
+        \item \textbf{Method:} Policy Gradient Reinforcement Learning.
+        \item \textbf{Initialization:} Start with SL network weights ($\rho = \sigma$).
+    \end{itemize}
+\end{frame}
+
+\begin{frame}{Reinforcement Learning (RL) Policy Network ($p_{\rho}$)}
+    \begin{itemize}
+        \item \textbf{Training:}
+        \vspace{2ex}
+        \begin{itemize}
+            \item Play games between current network $p_{\rho}$ and random previous versions of $p_{\rho^-}$ (random previous checkpoint).
+            \item Update weights using REINFORCE algorithm to maximize expected outcome $z_t$:
+            $$ \Delta\rho \propto \frac{\partial \log p_{\rho}(a_t|s_t)}{\partial\rho} z_t $$
+            Note: they use baseline $= v(s_t)$ for variance reduction
+        \end{itemize}
+    \end{itemize}
+\end{frame}
+
+\begin{frame}{What we have so far}
+    \begin{itemize}
+        \item A policy network $p_{\pi}$ that isn't very good, but is very \textit{fast}. Trained using supervised learning on human games.
+        \item A policy network $p_{\rho}$ that can play at at the level of a strong amateur. Trained using reinforcement learning on self-play games.
+    \end{itemize}
+\end{frame}
+    
+%------------------------------------------------
+\section{Value Network}
+%------------------------------------------------
+\begin{frame}{Value Network ($v_{\theta}$)}
+    \begin{itemize}
+        \item \textbf{Goal:} Estimate state value $v^{p_{\rho}}(s)$ = expected outcome from state $s$ if both players use policy $p_{\rho}$.
+        $$ v^p(s) = \mathbb{E}[z_t | s_t=s, a_{t...T} \sim p] $$
+        \item \textbf{Network $v_{\theta}(s)$:} CNN similar to policy net, outputs single scalar value.
+    \end{itemize}
+\end{frame}
+
+\begin{frame}{Value Network ($v_{\theta}$)}
+    \begin{itemize}
+        \item \textbf{Challenge:} Training on full games leads to overfitting due to correlated positions, and does not generalize well.
+        \item \textbf{Solution:} Generate a new dataset of 30 million \textit{unique} positions, each from a separate self-play game using $p_{\rho}$.
+        \item \textbf{Objective:} Minimize Mean Squared Error (MSE) between prediction $v_{\theta}(s)$ and actual outcome $z$:
+        $$ \Delta\theta \propto \frac{\partial v_{\theta}(s)}{\partial\theta} (z - v_{\theta}(s)) $$
+    \end{itemize}
+\end{frame}
+
+\begin{frame}{Value Network ($v_{\theta}$)}
+    \textbf{Results:}
+    \vspace{2ex}
+    \begin{itemize}
+        \item Much more accurate than rollouts with $p_{\pi}$.
+        \item Approached accuracy of rollouts with $p_{\rho}$ but vastly faster.
+    \end{itemize}
+\end{frame}
+
+%------------------------------------------------
+\section{MCTS in AlphaGo}
+%------------------------------------------------
+\begin{frame}{MCTS in AlphaGo: Notation}
+    \textbf{Key Notation:}
+    \vspace{2ex}
+    \begin{itemize}
+        \setlength{\itemsep}{2ex}
+        \item $N(s,a)$ - Visit count for state-action pair
+        \item $Q(s,a)$ - Action value (expected outcome)
+        \item $P(s,a)$ - Prior probability from policy network
+        \item $v_{\theta}(s)$ - Value network prediction
+        \item $p_{\pi}(a|s)$ - Fast rollout policy
+        \item $L$ - Maximum depth of tree search
+    \end{itemize}
+\end{frame}
+
+\begin{frame}{MCTS in AlphaGo}
+    Combines policy networks, value networks, and Monte Carlo rollouts within MCTS.
+    \vspace{2ex}
+    \begin{itemize}
+        \item \textbf{Tree Edges:} Store action value $Q(s, a)$, visit count $N(s, a)$, prior probability $P(s, a)$.
+    \end{itemize}
+\end{frame}
+
+\begin{frame}{MCTS in AlphaGo: Algorithm Steps}
+    \textbf{Algorithm Steps (1-2):}
+    \vspace{2ex}
+    \begin{enumerate}
+        \setlength{\itemsep}{3ex}
+        \item \textbf{Select:} From root to leaf, choose actions by maximizing:
+        $$ a_t = \underset{a}{\text{argmax}} \left( Q(s_t, a) + c_{\text{puct}} \cdot P(s_t, a) \cdot \frac{\sqrt{\sum_b N(s_t, b)}}{1 + N(s_t, a)} \right) $$
+        \item \textbf{Expand:} Create new leaf node $s_L$. Initialize prior probabilities using the SL policy network:
+        $$ P(s_L, a) = p_{\sigma}(a|s_L) $$
+    \end{enumerate}
+\end{frame}
+
+\begin{frame}{MCTS in AlphaGo: Algorithm Steps}
+    \textbf{Algorithm Step (3):}
+    \vspace{2ex}
+    \begin{enumerate}
+        \setlength{\itemsep}{3ex}
+        \setcounter{enumi}{2}
+        \item \textbf{Evaluate:} Estimate node value using a combination of:
+        \vspace{2ex}
+        \begin{itemize}
+            \item Value network: $v_{\theta}(s_L)$ - Deep strategic evaluation
+            \item Rollout: $z_L$ - Fast simulation to end of game using $p_{\pi}$
+        \end{itemize}
+        \vspace{3ex}
+        $$ V(s_L) = (1-\lambda)v_{\theta}(s_L) + \lambda z_L \quad \text{where } \lambda=0.5 $$
+    \end{enumerate}
+\end{frame}
+
+\begin{frame}{MCTS in AlphaGo: Algorithm Steps}
+    \textbf{Algorithm Step (4):}
+    \vspace{2ex}
+    \begin{enumerate}
+        \setlength{\itemsep}{3ex}
+        \setcounter{enumi}{3}
+        \item \textbf{Backup:} Update statistics for all visited nodes:
+        \vspace{2ex}
+        \begin{itemize}
+            \item Increment visit counts: $N(s, a) \leftarrow N(s, a) + 1$
+            \item Update action values:
+            \[ Q(s, a) \leftarrow \frac{N(s,a) \cdot Q(s,a) + V(s_L)}{N(s,a) + 1} \]
+        \end{itemize}
+    \end{enumerate}
+\end{frame}
+
+%------------------------------------------------
+\section{Results}
+%------------------------------------------------
+\begin{frame}{Results}
+    \begin{itemize}
+        \item \textbf{Against Programs:} Single machine AlphaGo won 99.8\% (494/495) games vs strongest Go programs. Distributed version won 100\%.
+        \item \textbf{Against Human Professional:}
+        \vspace{2ex}
+        \begin{itemize}
+            \item Defeated Fan Hui (3x European Champion, 2p) 5-0 in a formal match.
+            \item First time a computer beat a pro player without handicap.
+        \end{itemize}
+        \item \textbf{Search Efficiency:} Evaluated thousands of times \textit{fewer} positions than Deep Blue (chess), but selected/evaluated them more intelligently using the neural networks.
+    \end{itemize}
+\end{frame}
+
+\end{document}
